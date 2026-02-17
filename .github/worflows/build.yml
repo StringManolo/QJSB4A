@@ -1,0 +1,51 @@
+name: Build QuickJS for ARM and upload to release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:        # allows manual triggering
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: armv7
+            triplet: arm-linux-gnueabihf
+            output: qjs-armv7
+          - arch: aarch64
+            triplet: aarch64-linux-gnu
+            output: qjs-aarch64
+
+    steps:
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt update
+          sudo apt install -y make gcc-${triplet} binutils-${triplet}
+        env:
+          triplet: ${{ matrix.triplet }}
+
+      - name: Download QuickJS source
+        run: wget https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz
+
+      - name: Extract source
+        run: tar -xf quickjs-2025-09-13-2.tar.xz
+
+      - name: Build qjs for ${{ matrix.arch }}
+        working-directory: quickjs-2025-09-13-2
+        run: |
+          make CC=${{ matrix.triplet }}-gcc AR=${{ matrix.triplet }}-ar -j$(nproc)
+
+      - name: Copy and strip binary
+        run: |
+          cp quickjs-2025-09-13-2/qjs ${{ matrix.output }}
+          ${{ matrix.triplet }}-strip ${{ matrix.output }}
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ matrix.output }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
