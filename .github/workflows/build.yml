@@ -37,26 +37,33 @@ jobs:
           mkdir quickjs-src
           tar -xf quickjs-2025-09-13-2.tar.xz -C quickjs-src --strip-components=1
 
+      - name: Prepare native build directory
+        run: cp -r quickjs-src quickjs-native
+
       - name: Build native (to generate required source files)
-        working-directory: quickjs-src
+        working-directory: quickjs-native
         run: make -j$(nproc)
 
-      - name: Clean native objects (keep generated sources)
-        working-directory: quickjs-src
-        run: make clean
-
-      - name: Remove native qjs binary
-        working-directory: quickjs-src
-        run: rm -f qjs
+      - name: Prepare cross build directory
+        run: |
+          cp -r quickjs-src quickjs-cross
+          # Copy generated source files from native build to cross build
+          cp quickjs-native/repl.c quickjs-cross/ 2>/dev/null || true
+          cp quickjs-native/hello.c quickjs-cross/ 2>/dev/null || true
+          cp quickjs-native/test_fib.c quickjs-cross/ 2>/dev/null || true
 
       - name: Build qjs for ${{ matrix.arch }}
-        working-directory: quickjs-src
+        working-directory: quickjs-cross
         run: |
-          make qjs CC=${{ matrix.triplet }}-gcc AR=${{ matrix.triplet }}-ar -j$(nproc)
+          make qjs \
+            CC=${{ matrix.triplet }}-gcc \
+            AR=${{ matrix.triplet }}-ar \
+            QJSC=../quickjs-native/qjsc \
+            -j$(nproc)
 
       - name: Copy and strip binary
         run: |
-          cp quickjs-src/qjs ${{ matrix.output }}
+          cp quickjs-cross/qjs ${{ matrix.output }}
           ${{ matrix.triplet }}-strip ${{ matrix.output }}
 
       - name: Upload to release
