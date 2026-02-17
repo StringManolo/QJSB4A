@@ -77,6 +77,14 @@ jobs:
           cp quickjs-src/hello.c quickjs-cross/ 2>/dev/null || true
           cp quickjs-src/test_fib.c quickjs-cross/ 2>/dev/null || true
 
+      - name: Modify source to align __thread variables
+        working-directory: quickjs-cross
+        run: |
+          echo "Adding __attribute__((aligned(${TLS_ALIGN}))) to __thread variables"
+          find . -name '*.[ch]' -exec sed -i 's/\(\b__thread\b\)/__thread __attribute__((aligned('${TLS_ALIGN}')))/g' {} \;
+          # Also check for any THREAD_LOCAL macro if present (unlikely)
+          find . -name '*.[ch]' -exec sed -i 's/\(\bTHREAD_LOCAL\b\)/THREAD_LOCAL __attribute__((aligned('${TLS_ALIGN}')))/g' {} \;
+
       - name: Create TLS alignment assembly
         working-directory: quickjs-cross
         run: |
@@ -100,14 +108,15 @@ jobs:
           export RANLIB="$RANLIB"
           export CFLAGS="-fPIC -O2 -ftls-model=initial-exec -pthread"
           export LDFLAGS="-static -pthread -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-z,relro,-z,now"
+          # Compilar el objeto de alineación
           $CC -c tls_force_align.S -o tls_force_align.o
+          # Compilar qjs, incluyendo el objeto de alineación en LIBS
           make qjs \
             CC="$CC" \
             AR="$AR" \
             QJSC="../quickjs-src/qjsc" \
-            EXTRA_OBJS="tls_force_align.o" \
             LDFLAGS="$LDFLAGS" \
-            LIBS="-lm -ldl" \
+            LIBS="tls_force_align.o -lm -ldl" \
             -j$(nproc)
 
       - name: Strip binary
@@ -115,12 +124,19 @@ jobs:
           cp quickjs-cross/qjs qjs-${{ matrix.abi }}
           $STRIP qjs-${{ matrix.abi }}
 
-      - name: Verify binary (optional)
+      - name: Verify binary alignment
         run: |
-          echo "=== Binary Info ==="
-          file qjs-${{ matrix.abi }}
-          echo "=== TLS Section Info ==="
+          echo "=== TLS Section Alignment ==="
           readelf -S qjs-${{ matrix.abi }} | grep -E '(\.tdata|\.tbss)' || true
+          # Check actual alignment value
+          ALIGN=$(readelf -S qjs-${{ matrix.abi }} | awk '/\.tdata/ {print $NF}' | sed 's/^0*//')
+          if [ -n "$ALIGN" ]; then
+            echo "TLS alignment: $ALIGN"
+            if [ "${{ matrix.abi }}" = "arm64-v8a" ] && [ "$ALIGN" -lt 64 ]; then
+              echo "ERROR: TLS alignment is less than 64 for ARM64"
+              exit 1
+            fi
+          fi
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
