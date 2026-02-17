@@ -41,6 +41,10 @@ jobs:
         working-directory: quickjs-src
         run: make -j$(nproc)
 
+      - name: Clean native objects (keep generated sources)
+        working-directory: quickjs-src
+        run: make clean
+
       - name: Build qjs for ${{ matrix.arch }}
         working-directory: quickjs-src
         run: |
