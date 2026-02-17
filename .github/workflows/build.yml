@@ -1,4 +1,4 @@
-name: Build QuickJS for ARM and upload to release
+name: Build QuickJS for Android (static)
 
 on:
   release:
@@ -10,66 +10,121 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - arch: armv7
-            triplet: arm-linux-gnueabihf
-            output: qjs-armv7
-          - arch: aarch64
-            triplet: aarch64-linux-gnu
-            output: qjs-aarch64
+        abi: [arm64-v8a, armeabi-v7a]
 
     steps:
-      - name: Install cross-compilation tools
+      - uses: actions/checkout@v4
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y make gcc-${triplet} binutils-${triplet}
-        env:
-          triplet: ${{ matrix.triplet }}
+          sudo apt-get update
+          sudo apt-get install -y build-essential make wget
+
+      - name: Setup environment for ${{ matrix.abi }}
+        run: |
+          export API=21
+          case "${{ matrix.abi }}" in
+            arm64-v8a)
+              HOST_TRIPLE="aarch64-linux-android"
+              TLS_ALIGN=64
+              ;;
+            armeabi-v7a)
+              HOST_TRIPLE="armv7a-linux-androideabi"
+              TLS_ALIGN=32
+              ;;
+          esac
+          TOOLCHAIN="$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          BUILD_ROOT="$GITHUB_WORKSPACE/build/${{ matrix.abi }}"
+          mkdir -p "$BUILD_ROOT"
+          echo "API=$API" >> $GITHUB_ENV
+          echo "HOST_TRIPLE=$HOST_TRIPLE" >> $GITHUB_ENV
+          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
+          echo "BUILD_ROOT=$BUILD_ROOT" >> $GITHUB_ENV
+          echo "TLS_ALIGN=$TLS_ALIGN" >> $GITHUB_ENV
+          echo "CC=$TOOLCHAIN/${HOST_TRIPLE}${API}-clang" >> $GITHUB_ENV
+          echo "AR=$TOOLCHAIN/llvm-ar" >> $GITHUB_ENV
+          echo "RANLIB=$TOOLCHAIN/llvm-ranlib" >> $GITHUB_ENV
+          echo "STRIP=$TOOLCHAIN/llvm-strip" >> $GITHUB_ENV
 
       - name: Download QuickJS source
         run: wget https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz
 
-      - name: Extract source to known directory
+      - name: Extract source
         run: |
           mkdir quickjs-src
           tar -xf quickjs-2025-09-13-2.tar.xz -C quickjs-src --strip-components=1
 
-      - name: Prepare native build directory
-        run: cp -r quickjs-src quickjs-native
-
       - name: Build native (to generate required source files)
-        working-directory: quickjs-native
+        working-directory: quickjs-src
         run: make -j$(nproc)
 
       - name: Prepare cross build directory
         run: |
           cp -r quickjs-src quickjs-cross
-          # Copy generated source files from native build to cross build
-          cp quickjs-native/repl.c quickjs-cross/ 2>/dev/null || true
-          cp quickjs-native/hello.c quickjs-cross/ 2>/dev/null || true
-          cp quickjs-native/test_fib.c quickjs-cross/ 2>/dev/null || true
+          cp quickjs-src/repl.c quickjs-cross/ 2>/dev/null || true
+          cp quickjs-src/hello.c quickjs-cross/ 2>/dev/null || true
+          cp quickjs-src/test_fib.c quickjs-cross/ 2>/dev/null || true
 
-      - name: Build qjs for ${{ matrix.arch }}
+      - name: Create TLS alignment assembly
         working-directory: quickjs-cross
         run: |
+          cat > tls_force_align.S <<EOF
+          .section .tdata,"awT",%progbits
+          .p2align $(echo "l(${TLS_ALIGN})/l(2)" | bc -l | cut -d. -f1)
+          .globl quickjs_tls_force_align
+          .type quickjs_tls_force_align, %object
+          .size quickjs_tls_force_align, ${TLS_ALIGN}
+          quickjs_tls_force_align:
+          .zero ${TLS_ALIGN}
+          EOF
+
+      - name: Build qjs for Android ${{ matrix.abi }}
+        working-directory: quickjs-cross
+        env:
+          PATH: ${{ env.TOOLCHAIN }}:/usr/bin:/bin
+        run: |
+          export CC="$CC"
+          export AR="$AR"
+          export RANLIB="$RANLIB"
+          export CFLAGS="-fPIC -O2 -ftls-model=initial-exec -pthread"
+          export LDFLAGS="-static -pthread -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--section-start=.tdata=0x1000000"
+          # Compile the TLS alignment object
+          $CC -c tls_force_align.S -o tls_force_align.o
+          # Build qjs, using the native qjsc and adding our TLS object
           make qjs \
-            CC=${{ matrix.triplet }}-gcc \
-            AR=${{ matrix.triplet }}-ar \
-            QJSC=../quickjs-native/qjsc \
+            CC="$CC" \
+            AR="$AR" \
+            QJSC="../quickjs-src/qjsc" \
+            EXTRA_OBJS="tls_force_align.o" \
+            LDFLAGS="$LDFLAGS" \
             -j$(nproc)
 
-      - name: Copy and strip binary
+      - name: Strip binary
         run: |
-          cp quickjs-cross/qjs ${{ matrix.output }}
-          ${{ matrix.triplet }}-strip ${{ matrix.output }}
+          cp quickjs-cross/qjs qjs-${{ matrix.abi }}
+          $STRIP qjs-${{ matrix.abi }}
+
+      - name: Verify binary (optional)
+        run: |
+          echo "=== Binary Info ==="
+          file qjs-${{ matrix.abi }}
+          echo "=== TLS Section Info ==="
+          readelf -S qjs-${{ matrix.abi }} | grep -E '(\.tdata|\.tbss)' || true
 
       - name: Upload to release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: ${{ matrix.output }}
+          files: qjs-${{ matrix.abi }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
