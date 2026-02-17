@@ -45,6 +45,10 @@ jobs:
         working-directory: quickjs-src
         run: make clean
 
+      - name: Remove native qjs binary
+        working-directory: quickjs-src
+        run: rm -f qjs
+
       - name: Build qjs for ${{ matrix.arch }}
         working-directory: quickjs-src
         run: |
