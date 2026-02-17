@@ -40,7 +40,7 @@ jobs:
       - name: Build qjs for ${{ matrix.arch }}
         working-directory: quickjs-src
         run: |
-          make CC=${{ matrix.triplet }}-gcc AR=${{ matrix.triplet }}-ar -j$(nproc)
+          make qjs CC=${{ matrix.triplet }}-gcc AR=${{ matrix.triplet }}-ar -j$(nproc)
 
       - name: Copy and strip binary
         run: |
