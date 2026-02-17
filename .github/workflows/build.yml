@@ -101,12 +101,14 @@ jobs:
           # Compile the TLS alignment object
           $CC -c tls_force_align.S -o tls_force_align.o
           # Build qjs, using the native qjsc and adding our TLS object
+          # Note: On Android, -lpthread and -ldl are not needed (they are part of libc)
           make qjs \
             CC="$CC" \
             AR="$AR" \
             QJSC="../quickjs-src/qjsc" \
             EXTRA_OBJS="tls_force_align.o" \
             LDFLAGS="$LDFLAGS" \
+            LIBS="-lm" \
             -j$(nproc)
 
       - name: Strip binary
