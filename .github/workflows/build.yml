@@ -3,7 +3,10 @@ name: Build QuickJS for ARM and upload to release
 on:
   release:
     types: [published]
-  workflow_dispatch:        # allows manual triggering
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -29,17 +32,19 @@ jobs:
       - name: Download QuickJS source
         run: wget https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz
 
-      - name: Extract source
-        run: tar -xf quickjs-2025-09-13-2.tar.xz
+      - name: Extract source to known directory
+        run: |
+          mkdir quickjs-src
+          tar -xf quickjs-2025-09-13-2.tar.xz -C quickjs-src --strip-components=1
 
       - name: Build qjs for ${{ matrix.arch }}
-        working-directory: quickjs-2025-09-13-2
+        working-directory: quickjs-src
         run: |
           make CC=${{ matrix.triplet }}-gcc AR=${{ matrix.triplet }}-ar -j$(nproc)
 
       - name: Copy and strip binary
         run: |
-          cp quickjs-2025-09-13-2/qjs ${{ matrix.output }}
+          cp quickjs-src/qjs ${{ matrix.output }}
           ${{ matrix.triplet }}-strip ${{ matrix.output }}
 
       - name: Upload to release
