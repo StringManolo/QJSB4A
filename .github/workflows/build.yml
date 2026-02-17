@@ -68,9 +68,11 @@ jobs:
         working-directory: quickjs-src
         run: make -j$(nproc)
 
-      - name: Prepare cross build directory
+      - name: Prepare cross build directory (clean)
         run: |
+          rm -rf quickjs-cross
           cp -r quickjs-src quickjs-cross
+          make -C quickjs-cross clean
           cp quickjs-src/repl.c quickjs-cross/ 2>/dev/null || true
           cp quickjs-src/hello.c quickjs-cross/ 2>/dev/null || true
           cp quickjs-src/test_fib.c quickjs-cross/ 2>/dev/null || true
@@ -97,11 +99,8 @@ jobs:
           export AR="$AR"
           export RANLIB="$RANLIB"
           export CFLAGS="-fPIC -O2 -ftls-model=initial-exec -pthread"
-          # Flags de enlace: estático, pthread, alineación de página, relro
           export LDFLAGS="-static -pthread -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-z,relro,-z,now"
-          # Compilar el objeto de alineación TLS
           $CC -c tls_force_align.S -o tls_force_align.o
-          # Compilar qjs, usando qjsc nativo y enlazando libdl explícitamente
           make qjs \
             CC="$CC" \
             AR="$AR" \
