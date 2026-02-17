@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential make wget
+          sudo apt-get install -y build-essential make wget bc
 
       - name: Setup environment for ${{ matrix.abi }}
         run: |
@@ -97,18 +97,18 @@ jobs:
           export AR="$AR"
           export RANLIB="$RANLIB"
           export CFLAGS="-fPIC -O2 -ftls-model=initial-exec -pthread"
-          export LDFLAGS="-static -pthread -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--section-start=.tdata=0x1000000"
-          # Compile the TLS alignment object
+          # Flags de enlace: estático, pthread, alineación de página, relro
+          export LDFLAGS="-static -pthread -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-z,relro,-z,now"
+          # Compilar el objeto de alineación TLS
           $CC -c tls_force_align.S -o tls_force_align.o
-          # Build qjs, using the native qjsc and adding our TLS object
-          # Note: On Android, -lpthread and -ldl are not needed (they are part of libc)
+          # Compilar qjs, usando qjsc nativo y enlazando libdl explícitamente
           make qjs \
             CC="$CC" \
             AR="$AR" \
             QJSC="../quickjs-src/qjsc" \
             EXTRA_OBJS="tls_force_align.o" \
             LDFLAGS="$LDFLAGS" \
-            LIBS="-lm" \
+            LIBS="-lm -ldl" \
             -j$(nproc)
 
       - name: Strip binary
